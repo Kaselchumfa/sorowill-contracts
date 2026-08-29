@@ -108,11 +108,33 @@ mod merge_rounding_test;
 #[cfg(test)]
 mod merge_fixed_amount_test;
 
+/// Regression test for issue #263: `get_guardian_vote_status` exposes a
+/// guardian's vote timestamp/reason without requiring event replay.
+#[cfg(test)]
+mod issue_263_test;
+
+/// Regression test for issue #264: `adjust_locked_value` prunes a
+/// `TokenLockedBalance` entry once its total returns to zero.
+#[cfg(test)]
+mod issue_264_test;
+
+/// Regression test for issue #265: `create_will` succeeds with
+/// `MAX_BENEFICIARIES` beneficiaries and multiple tokens without a
+/// host-level event/resource error.
+#[cfg(test)]
+mod issue_265_test;
+
+/// Regression test for issue #266: `split_will` must reject a renormalised
+/// beneficiary share that rounds to exactly 0 bp.
+#[cfg(test)]
+mod issue_266_test;
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
 
 pub use errors::WillError;
+pub use storage::GuardianVoteRecord;
 pub use types::{
     Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
     WillStatus, WillStatusTransition,
@@ -1316,6 +1338,30 @@ impl WillContract {
         }
     }
 
+    /// Returns `guardian`'s current vote record for `will_id`'s active
+    /// trigger cycle -- the timestamp their `guardian_trigger` vote was cast
+    /// and the reason they gave -- or `None` if they have not voted, or their
+    /// vote has since expired past the will's grace period.
+    ///
+    /// Lets a guardian's own dashboard show "you already voted" state
+    /// directly from chain state, without replaying `guardian_voted` events
+    /// off-chain (#263).
+    pub fn get_guardian_vote_status(
+        env: Env,
+        will_id: u64,
+        guardian: Address,
+    ) -> Option<GuardianVoteRecord> {
+        let will = load_will(&env, will_id);
+        let record = storage::get_guardian_vote(&env, will_id, &guardian)?;
+        let now = env.ledger().timestamp();
+        let expiry_secs = will.grace_period_days * SECONDS_PER_DAY;
+        if now - record.timestamp <= expiry_secs {
+            Some(record)
+        } else {
+            None
+        }
+    }
+
     /// Returns aggregate protocol statistics for all wills currently tracked on-chain.
     pub fn get_protocol_stats(env: Env) -> ProtocolStats {
         storage::get_protocol_stats(&env)
@@ -2214,6 +2260,13 @@ impl WillContract {
         // to 10,000 bps again; `FixedAmount` entries pass through unchanged.
         let normalised_remaining = renormalize_percentages(&env, &remaining_beneficiaries);
         let normalised_split = renormalize_percentages(&env, &beneficiaries_to_split);
+
+        // Renormalising can round a beneficiary's tiny original share down to
+        // exactly 0 bp, which assert_valid_allocations already rejects at
+        // create_will/update_beneficiaries time but which this path never
+        // re-checked before saving either resulting will (#266).
+        assert_valid_allocations(&env, &normalised_remaining, source.balance - amount);
+        assert_valid_allocations(&env, &normalised_split, amount);
 
         // Remove split-off beneficiaries from the source index and add them to
         // the child's index.

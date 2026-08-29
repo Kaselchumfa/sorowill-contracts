@@ -94,7 +94,7 @@ pub(crate) enum DataKey {
 /// The data stored for each guardian vote: the Unix timestamp when the vote
 /// was cast and the reason code the guardian provided.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GuardianVoteRecord {
     pub timestamp: u64,
     pub reason: GuardianVoteReason,
@@ -157,24 +157,32 @@ pub fn decrement_active_will_count(env: &Env) {
     save_protocol_stats(env, &stats);
 }
 
-/// Adds or subtracts a token amount from the protocol's locked-balance totals.
+/// Adds or subtracts a token amount from the protocol's locked-balance
+/// totals.
+///
+/// An entry whose `total_locked` returns to exactly zero is dropped rather
+/// than kept as a permanent zero-balance row -- otherwise
+/// `total_locked_by_token` grows by one entry per distinct token ever used,
+/// forever, even for tokens with no current usage (#264).
 pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
     let mut stats = get_protocol_stats(env);
     let mut found = false;
     let mut updated = Vec::new(env);
     for entry in stats.total_locked_by_token.iter() {
         if entry.token == *token {
-            let next_total = entry.total_locked + delta;
-            updated.push_back(TokenLockedBalance {
-                token: entry.token.clone(),
-                total_locked: next_total,
-            });
             found = true;
+            let next_total = entry.total_locked + delta;
+            if next_total != 0 {
+                updated.push_back(TokenLockedBalance {
+                    token: entry.token.clone(),
+                    total_locked: next_total,
+                });
+            }
         } else {
             updated.push_back(entry.clone());
         }
     }
-    if !found {
+    if !found && delta != 0 {
         updated.push_back(TokenLockedBalance {
             token: token.clone(),
             total_locked: delta,
