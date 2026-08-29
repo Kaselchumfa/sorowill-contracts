@@ -108,6 +108,26 @@ mod merge_rounding_test;
 #[cfg(test)]
 mod merge_fixed_amount_test;
 
+/// Regression test for issue #259: pagination must skip past a cursor id
+/// that has since been removed from the index, not return an empty page.
+#[cfg(test)]
+mod issue_259_test;
+
+/// Regression test for issue #260: `create_will` must check index capacity
+/// before performing any token transfer.
+#[cfg(test)]
+mod issue_260_test;
+
+/// Regression test for issue #261: the `decimals()` probe is a best-effort
+/// sanity check; a token that fails `transfer` aborts there, not earlier.
+#[cfg(test)]
+mod issue_261_test;
+
+/// Regression test for issue #262: `clone_will` must re-run
+/// `assert_valid_guardians` on the copied guardian list.
+#[cfg(test)]
+mod issue_262_test;
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
@@ -251,7 +271,13 @@ impl WillContract {
     /// - [`WillError::InvalidPeriod`] if either period is zero or exceeds
     ///   [`MAX_PERIOD_DAYS`].
     /// - [`WillError::InvalidToken`] if any supplied token address does not respond to a
-    ///   read-only `decimals()` probe, indicating it is not a valid SEP-41 token.
+    ///   read-only `decimals()` probe. This is a best-effort sanity check, not a
+    ///   full SEP-41 compliance guarantee: a contract that implements `decimals()`
+    ///   but not `transfer`/`balance` correctly will pass this probe and only fail
+    ///   later, when the transfer below is actually attempted (which aborts the
+    ///   whole call, so no funds are ever at risk -- it just means `InvalidToken`
+    ///   is not a substitute for verifying a token address's full interface
+    ///   out-of-band before calling `create_will`).
     ///
     /// # Examples
     ///
@@ -335,6 +361,12 @@ impl WillContract {
                 consent: GuardianConsent::Pending,
             });
         }
+
+        // Checked before any transfer: a call that was always going to fail
+        // MAX_WILLS_PER_INDEX for the owner or a beneficiary should fail on
+        // this cheap in-contract check, not after the token transfer below
+        // has already succeeded (#260).
+        storage::assert_index_capacity(&env, &owner, &beneficiaries);
 
         // Validate amounts and build the balances map.
         let mut balances: Map<Address, i128> = Map::new(&env);
@@ -1747,6 +1779,18 @@ impl WillContract {
         }
 
         let source = load_will(&env, source_will_id);
+
+        // Re-run the same owner-not-a-guardian / no-duplicate-guardian check
+        // every other will-creation path runs. Safe today only because
+        // `source.guardians` was already validated when the source will was
+        // created; re-checking here means a future tightening of
+        // assert_valid_guardians's rules can't silently skip wills created
+        // via clone_will (#262).
+        let mut source_guardian_addresses: Vec<Address> = Vec::new(&env);
+        for guardian in source.guardians.iter() {
+            source_guardian_addresses.push_back(guardian.address.clone());
+        }
+        assert_valid_guardians(&env, &owner, &source_guardian_addresses);
 
         // Build balances map and transfer tokens from the owner.
         let mut balances: Map<Address, i128> = Map::new(&env);
