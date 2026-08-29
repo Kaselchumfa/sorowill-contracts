@@ -108,6 +108,24 @@ mod merge_rounding_test;
 #[cfg(test)]
 mod merge_fixed_amount_test;
 
+/// Regression test for issue #279: `cancel_will` must reject a `Triggered` will.
+#[cfg(test)]
+mod issue_279_test;
+
+/// Regression test for issue #280: `top_up` must reject a non-`Active` will.
+#[cfg(test)]
+mod issue_280_test;
+
+/// Regression test for issue #281: `guardian_trigger` must reject a guardian
+/// removed via a prior `update_guardians` call.
+#[cfg(test)]
+mod issue_281_test;
+
+/// Regression test for issue #282: `renounce_beneficiary` must reject a
+/// second renunciation from the same, already-removed address.
+#[cfg(test)]
+mod issue_282_test;
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
