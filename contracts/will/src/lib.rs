@@ -108,6 +108,11 @@ mod merge_rounding_test;
 #[cfg(test)]
 mod merge_fixed_amount_test;
 
+/// Regression test for issue #272: the `contractmeta!` `"Version"` literal
+/// must match `CONTRACT_VERSION`'s semver-decoded form.
+#[cfg(test)]
+mod issue_272_test;
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
@@ -197,9 +202,11 @@ soroban_sdk::contractmeta!(
     key = "Description",
     val = "Trustless on-chain inheritance and dead man's switch protocol for Stellar Soroban"
 );
+// Kept in sync with CONTRACT_VERSION's semver-decoded form by
+// issue_272_test.rs; bump both together.
 soroban_sdk::contractmeta!(
     key = "Version",
-    val = "0.1.0"
+    val = "1.0.0"
 );
 soroban_sdk::contractmeta!(
     key = "Homepage",
