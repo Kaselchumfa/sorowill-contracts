@@ -108,6 +108,16 @@ mod merge_rounding_test;
 #[cfg(test)]
 mod merge_fixed_amount_test;
 
+/// Regression test for issue #277: a `PendingConfirmation` will's check-in
+/// clock must not start until `confirm_will` is called.
+#[cfg(test)]
+mod issue_277_test;
+
+/// Regression test for issue #278: `confirm_will` must anchor the check-in
+/// deadline to the confirmation timestamp, not the creation timestamp.
+#[cfg(test)]
+mod issue_278_test;
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
