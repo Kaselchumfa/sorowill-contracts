@@ -114,6 +114,7 @@ mod merge_fixed_amount_test;
 #[cfg(test)]
 mod update_guardians_threshold_test;
 
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
@@ -1549,6 +1550,30 @@ impl WillContract {
     /// # Parameters
     /// - `reason`: the reason the guardian is casting the vote.
     ///
+    /// # Reason codes are informational metadata — there is no on-chain consensus requirement
+    ///
+    /// Each guardian supplies their own [`GuardianVoteReason`] independently.
+    /// The contract records that reason in the guardian's
+    /// [`storage::GuardianVoteRecord`] for off-chain auditing, but it plays
+    /// **no role in the quorum calculation**: the only on-chain invariant
+    /// checked is `guardian_votes >= guardian_threshold`. As a direct
+    /// consequence:
+    ///
+    /// - Two (or more) guardians may vote with **different, even contradictory**
+    ///   reason codes and still reach quorum.  For example, one guardian may
+    ///   vote [`GuardianVoteReason::Deceased`] while another votes
+    ///   [`GuardianVoteReason::Incapacitated`] — the will is released once
+    ///   the threshold is met regardless.
+    /// - There is no mechanism that prevents a guardian from choosing
+    ///   [`GuardianVoteReason::Other`] for any situation, including ones
+    ///   covered by a more specific code.
+    ///
+    /// This is an intentional consequence of the trustless design: the
+    /// contract cannot verify off-chain evidence, so it makes no attempt to
+    /// do so.  The `reason` field exists to give beneficiaries and auditors a
+    /// human-readable signal about *why* guardians acted — it is not a
+    /// binding commitment or a consensus input.
+    ///
     /// # Panics
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - [`WillError::NotGuardian`] if `guardian` is not one of the will's guardians.
@@ -2191,11 +2216,65 @@ impl WillContract {
     /// queries. The archived will data will eventually be garbage-collected
     /// by Soroban's state archival system.
     ///
-    /// Callable by anyone: once a will is settled it can be archived to
-    /// reduce ongoing storage costs.
+    /// **Callable by anyone**: no `require_auth` is enforced. Once a will
+    /// reaches a terminal state (`Released` or `Cancelled`) any party may
+    /// call this function to reclaim on-chain storage and reduce ledger-rent
+    /// costs. The design is intentional — a will's final asset distributions
+    /// are already complete before this point — but it creates an observable
+    /// race condition described below.
+    ///
+    /// # Race condition: permissionless archival and `WillNotFound` ambiguity
+    ///
+    /// Because any account can call `archive_will` at any time after a will
+    /// is released, a client that reads a will's status and then queries it
+    /// again a moment later may observe the will disappear between the two
+    /// calls. Specifically:
+    ///
+    /// 1. Client A reads will `42` and sees `WillStatus::Released`.
+    /// 2. Account B (anyone) calls `archive_will(42)`.
+    /// 3. Client A calls `get_will(42)` — it now panics with
+    ///    [`WillError::WillNotFound`].
+    ///
+    /// This is compounded by the limitation documented in
+    /// [`storage::load_will`] (issue #166): Soroban's persistent-storage API
+    /// cannot distinguish a key that **never existed** from a key that was
+    /// **explicitly archived by this function** or one that was
+    /// **TTL-archived by the network** after its storage lease expired.
+    /// All three cases surface as the identical [`WillError::WillNotFound`]
+    /// panic to the caller.
+    ///
+    /// ## Recommended client-side handling
+    ///
+    /// Clients should treat `WillNotFound` on a `will_id` that was previously
+    /// known to exist (or that appears in an off-chain index) as one of three
+    /// possible states, in order of likelihood:
+    ///
+    /// 1. **Explicitly archived** — the will completed its lifecycle, funds
+    ///    were distributed, and a third party (or the owner) called
+    ///    `archive_will`. This is the normal post-release state and requires
+    ///    no recovery. The final state is recoverable from the on-chain audit
+    ///    trail via [`WillContract::get_will_history`] while that entry's own
+    ///    TTL is still live.
+    /// 2. **Network TTL expiry** — the will's persistent entry lapsed.
+    ///    Terminal wills stop renewing their TTL (see `storage::save_will`),
+    ///    so Released/Cancelled wills gradually expire. The entry can be
+    ///    restored by a network-level state-restore transaction; until then
+    ///    the contract cannot serve it.
+    /// 3. **Never created** — the id was never allocated. Clients can rule
+    ///    this out by confirming the id is below the current `NextWillId`
+    ///    counter or by checking an off-chain event log.
+    ///
+    /// A dedicated `WillArchived` error code that would let callers
+    /// distinguish case 1 from cases 2 and 3 is deferred: the current
+    /// soroban-sdk version does not expose an archived-entry probe, so a
+    /// single [`WillError::WillNotFound`] is the only signal available today.
+    /// Clients MUST NOT treat `WillNotFound` as proof that a will was never
+    /// created or that funds were never distributed.
     ///
     /// # Panics
-    /// - [`WillError::WillNotFound`] if no will exists with this id.
+    /// - [`WillError::WillNotFound`] if no will exists with this id (see
+    ///   the ambiguity note above — this error is also returned for wills
+    ///   that have already been archived).
     /// - [`WillError::WillNotSettled`] if the will is not `Released` or `Cancelled`.
     pub fn archive_will(env: Env, will_id: u64) {
         let will = load_will(&env, will_id);
