@@ -110,6 +110,24 @@ mod test_xdr_spec;
 #[cfg(test)]
 mod distribute_overflow_safety_test;
 
+/// Regression test for issue #183: `merge_wills` resets guardian state without
+/// reinitialising the vote-weight accumulator.
+#[cfg(test)]
+mod issue_183_test;
+
+/// Regression test for issue #184: `merge_wills` refuses mismatched primary tokens.
+#[cfg(test)]
+mod issue_184_test;
+
+/// Regression test for issue #185: `add_hashed_beneficiary` emits its lifecycle event.
+#[cfg(test)]
+mod issue_185_test;
+
+/// Regression test for issue #186: hashed-beneficiary percentages must use the
+/// same basis-point scale as the rest of the contract.
+#[cfg(test)]
+mod issue_186_test;
+
 /// Regression test for issue #187: ensure `merge_wills` decrements the active
 /// will count when marking the merged will as cancelled.
 #[cfg(test)]
