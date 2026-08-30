@@ -155,6 +155,7 @@ use soroban_sdk::{
 };
 
 pub use errors::WillError;
+pub use storage::GuardianVoteRecord;
 pub use types::{
     Allocation, Beneficiary, Guardian, GuardianConsent, GuardianVoteReason, HashedBeneficiary,
     ProtocolStats, Will, WillStatus, WillStatusTransition,
@@ -1450,6 +1451,30 @@ impl WillContract {
             | WillStatus::Released
             | WillStatus::Cancelled
             | WillStatus::Settled => None,
+        }
+    }
+
+    /// Returns `guardian`'s current vote record for `will_id`'s active
+    /// trigger cycle -- the timestamp their `guardian_trigger` vote was cast
+    /// and the reason they gave -- or `None` if they have not voted, or their
+    /// vote has since expired past the will's grace period.
+    ///
+    /// Lets a guardian's own dashboard show "you already voted" state
+    /// directly from chain state, without replaying `guardian_voted` events
+    /// off-chain (#263).
+    pub fn get_guardian_vote_status(
+        env: Env,
+        will_id: u64,
+        guardian: Address,
+    ) -> Option<GuardianVoteRecord> {
+        let will = load_will(&env, will_id);
+        let record = storage::get_guardian_vote(&env, will_id, &guardian)?;
+        let now = env.ledger().timestamp();
+        let expiry_secs = will.grace_period_days * SECONDS_PER_DAY;
+        if now - record.timestamp <= expiry_secs {
+            Some(record)
+        } else {
+            None
         }
     }
 
