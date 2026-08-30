@@ -239,9 +239,11 @@ soroban_sdk::contractmeta!(
     key = "Description",
     val = "Trustless on-chain inheritance and dead man's switch protocol for Stellar Soroban"
 );
+// Kept in sync with CONTRACT_VERSION's semver-decoded form by
+// issue_272_test.rs; bump both together.
 soroban_sdk::contractmeta!(
     key = "Version",
-    val = "0.1.0"
+    val = "1.0.0"
 );
 soroban_sdk::contractmeta!(
     key = "Homepage",
